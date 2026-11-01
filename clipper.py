@@ -52,7 +52,8 @@ def download_video(url):
     opts = {"outtmpl": str(WORK / "source.%(ext)s"), "noplaylist": True,
             "format": "bv*[height<=720]+ba/b[height<=720]/best",
             "merge_output_format": "mp4", "quiet": True, "socket_timeout": 45,
-            "retries": 3, "fragment_retries": 3, "max_filesize": 700_000_000}
+            "retries": 3, "fragment_retries": 3, "max_filesize": 700_000_000,
+            "js_runtimes": {"node": {}}, "remote_components": {"ejs:github"}}
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([url])
     files = [f for f in WORK.glob("source.*")
