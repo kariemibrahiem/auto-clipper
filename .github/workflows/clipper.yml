@@ -56,6 +56,11 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Set up JavaScript for YouTube extraction
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
       - name: Install media tools
         run: |
           sudo apt-get update -qq
