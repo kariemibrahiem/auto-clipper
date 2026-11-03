@@ -1,5 +1,10 @@
 import unittest
-from clipper import Speech, choose_windows, hook_text, score
+from unittest.mock import patch
+from pathlib import Path
+import tempfile
+
+from clipper import (Speech, choose_windows, hook_text, score, validate_media_url,
+                     download_video, prepare_analysis_video)
 
 
 class ClipperTests(unittest.TestCase):
@@ -21,6 +26,32 @@ class ClipperTests(unittest.TestCase):
 
     def test_high_score_for_speech(self):
         self.assertGreater(score([Speech(0, 5, "Wow, look!")], 0, 8), score([], 0, 8))
+
+    def test_direct_mp4_not_sent_to_youtube_extractor(self):
+        with patch('clipper.download_direct_video', return_value=Path('/tmp/sample.mp4')) as fetch:
+            result = download_video('https://example.com/sample.mp4?token=dummy')
+        self.assertEqual(result, Path('/tmp/sample.mp4'))
+        fetch.assert_called_once()
+
+    def test_explicit_direct_download_supports_signed_urls(self):
+        with patch('clipper.download_direct_video', return_value=Path('/tmp/sample.mp4')) as fetch:
+            download_video('https://example.com/download?id=9', prefer_direct=True)
+        fetch.assert_called_once()
+
+    def test_rejects_private_ip_media_url(self):
+        with self.assertRaises(ValueError):
+            validate_media_url('https://127.0.0.1/video.mp4')
+        with self.assertRaises(ValueError):
+            validate_media_url('http://example.com/video.mp4')
+
+    def test_long_source_trims_to_analysis_window(self):
+        with patch('clipper.duration', side_effect=[5912]):
+            with patch('clipper.cmd') as run:
+                _, start = prepare_analysis_video(Path('video.mp4'), 420, 1800)
+        self.assertEqual(start, 420)
+        command = run.call_args.args
+        self.assertIn(1800, command)
+        self.assertIn(420, command)
 
 
 if __name__ == "__main__":

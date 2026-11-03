@@ -1,0 +1,1506 @@
+{
+  "name": "Auto Clipping | Google Sheets Queue → GitHub → YouTube Shorts",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "f9f4f3f7-15fc-40b1-bcf8-d0377c35ff28",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        40
+      ]
+    },
+    {
+      "id": "622d19ec-8116-49a2-854e-2378f50c908e",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        240
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "3c74cdcd-85ff-43f5-9494-92ffeaec0dcb",
+      "name": "Read Clipping Queue",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        240,
+        120
+      ],
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1HQsMb9d5wUvrMdRxphVN4ZTi9Vd9H5Hpx-FQL-Hlx_0",
+          "mode": "id",
+          "cachedResultName": "videos sheet",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HQsMb9d5wUvrMdRxphVN4ZTi9Vd9H5Hpx-FQL-Hlx_0/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Clipping Queue",
+          "mode": "name",
+          "cachedResultName": "Clipping Queue",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HQsMb9d5wUvrMdRxphVN4ZTi9Vd9H5Hpx-FQL-Hlx_0/edit#gid=862104301"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "TVqY0YmVBrTTDJGm",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "abbd991c-26b8-4c2e-ab6c-9efa007a880f",
+      "name": "Pick Next Pending",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        120
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// One job per execution. source_url can be a direct MP4; optional media_url\n// may point to a licensed MP4 when source_url is a YouTube watch page.\nconst rows = $input.all();\nconst next = rows.find(item => {\n  const row = item.json || {};\n  const status = String(row.status || '').trim().toLowerCase();\n  return String(row.source_url || '').trim() && (!status || status === 'pending');\n});\nif (!next) return [];\nconst row = next.json;\nconst source_url = String(row.source_url).trim();\nconst media_url = String(row.media_url || '').trim();\nconst actual_url = media_url || source_url;\nconst job_id = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 9);\nconst bounded = (raw, fallback, min, max) => {\n  const n = Number(raw);\n  return raw === '' || raw === null || raw === undefined || !Number.isInteger(n) || n < min || n > max ? fallback : n;\n};\nconst language = ['auto','ar','en'].includes(String(row.language || '').trim().toLowerCase()) ? String(row.language).trim().toLowerCase() : 'auto';\nconst narration = ['on','off'].includes(String(row.narration || '').trim().toLowerCase()) ? String(row.narration).trim().toLowerCase() : 'on';\nconst checkUrl = value => {\n  try {\n    const u = new URL(value);\n    return u.protocol === 'https:' && !!u.hostname && !u.username && !u.password;\n  } catch { return false; }\n};\nconst isYoutube = /^(www\\.|m\\.)?(youtube\\.com|youtu\\.be)$/i.test((() => {try{return new URL(source_url).hostname;}catch{return '';}})());\nconst noDownloadableVideo = isYoutube && !media_url;\nconst invalid_input = !checkUrl(source_url) || !checkUrl(actual_url) || noDownloadableVideo;\nconst reason = !checkUrl(source_url) || !checkUrl(actual_url)\n  ? 'source_url / media_url must be valid public HTTPS URLs'\n  : noDownloadableVideo\n    ? 'GitHub is blocked by YouTube bot verification. Use a licensed direct MP4 in source_url, or add media_url with a direct downloadable MP4.'\n    : '';\nconst start_seconds = bounded(row.start_seconds,0,0,10799);\nconst analysis_seconds = bounded(row.analysis_seconds,1800,60,2700);\nreturn [{json:{\n  row_number:Number(row.row_number), source_url, media_url, download_url:actual_url,\n  repo:'kariemibrahiem/auto-clipper',\n  job_id, run_label:'clip-' + job_id,\n  base_title:String(row.title || 'Best Moments').trim() || 'Best Moments',\n  clip_count:bounded(row.clip_count,3,1,5),\n  clip_seconds:bounded(row.clip_seconds,35,15,55),\n  language,narration,started_at:Date.now(), start_seconds, analysis_seconds,\n  source_is_direct: Boolean(media_url) || /\\.(mp4|mov|mkv|webm|m4v)(\\?|$)/i.test(actual_url),\n  invalid_input, error:reason\n}}];"
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "clip-ready-condition",
+              "leftValue": "={{ String($json.invalid_input) }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a420c163-83d6-4ee1-8449-6db5219abf43",
+      "name": "Invalid Source URL?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        680,
+        120
+      ]
+    },
+    {
+      "id": "f448b87f-b8ae-417e-8343-a518d5f725fe",
+      "name": "Mark Invalid Row",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        900,
+        -40
+      ],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1HQsMb9d5wUvrMdRxphVN4ZTi9Vd9H5Hpx-FQL-Hlx_0",
+          "mode": "id",
+          "cachedResultName": "videos sheet",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HQsMb9d5wUvrMdRxphVN4ZTi9Vd9H5Hpx-FQL-Hlx_0/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Clipping Queue",
+          "mode": "name",
+          "cachedResultName": "Clipping Queue",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HQsMb9d5wUvrMdRxphVN4ZTi9Vd9H5Hpx-FQL-Hlx_0/edit#gid=862104301"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ Number($json.row_number) }}",
+            "status": "error",
+            "error": "={{ $json.error }}",
+            "updated_at": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "source_url",
+              "displayName": "source_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "clip_count",
+              "displayName": "clip_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "clip_seconds",
+              "displayName": "clip_seconds",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "language",
+              "displayName": "language",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "narration",
+              "displayName": "narration",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "job_id",
+              "displayName": "job_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "shorts_links",
+              "displayName": "shorts_links",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error",
+              "displayName": "error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "TVqY0YmVBrTTDJGm",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "ba8767b5-e3ca-430d-951f-1dd97bb9f118",
+      "name": "Mark Processing",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        900,
+        220
+      ],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1HQsMb9d5wUvrMdRxphVN4ZTi9Vd9H5Hpx-FQL-Hlx_0",
+          "mode": "id",
+          "cachedResultName": "videos sheet",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HQsMb9d5wUvrMdRxphVN4ZTi9Vd9H5Hpx-FQL-Hlx_0/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Clipping Queue",
+          "mode": "name",
+          "cachedResultName": "Clipping Queue",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HQsMb9d5wUvrMdRxphVN4ZTi9Vd9H5Hpx-FQL-Hlx_0/edit#gid=862104301"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ Number($json.row_number) }}",
+            "status": "processing",
+            "job_id": "={{ $json.job_id }}",
+            "error": "",
+            "shorts_links": "",
+            "updated_at": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "source_url",
+              "displayName": "source_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "clip_count",
+              "displayName": "clip_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "clip_seconds",
+              "displayName": "clip_seconds",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "language",
+              "displayName": "language",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "narration",
+              "displayName": "narration",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "job_id",
+              "displayName": "job_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "shorts_links",
+              "displayName": "shorts_links",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error",
+              "displayName": "error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "TVqY0YmVBrTTDJGm",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "12f85428-1c43-4a89-a890-b584de3f7841",
+      "name": "Configure Job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        220
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Configuration is read from the selected Google Sheets row.\nconst config = $('Pick Next Pending').first().json;\nreturn [{json:{...config}}];"
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ \"https://api.github.com/repos/\" + $json.repo + \"/actions/workflows/clipper.yml/dispatches\" }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  ref: 'main',\n  inputs: {\n    job_id: $json.job_id,\n    source_url: $json.download_url,\n    source_is_direct: String($json.source_is_direct),\n    start_seconds: String($json.start_seconds),\n    analysis_seconds: String($json.analysis_seconds),\n    clip_count: String($json.clip_count),\n    clip_seconds: String($json.clip_seconds),\n    language: $json.language,\n    narration: $json.narration\n  }\n}) }}",
+        "options": {}
+      },
+      "id": "4a75ffba-4cb6-478d-89c7-d1713b4122b0",
+      "name": "Dispatch GitHub Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1330,
+        220
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "46kHfTBySoOWVhPg",
+          "name": "Bearer Auth account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "amount": 30
+      },
+      "id": "2ecd44dd-b03e-40e0-8a3e-5662258c31ae",
+      "name": "Wait for GitHub",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        220
+      ],
+      "webhookId": "85702d4a-80b1-40ff-acd5-be84d6d01705"
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://api.github.com/repos/\" + $(\"Configure Job\").first().json.repo + \"/actions/workflows/clipper.yml/runs?event=workflow_dispatch&per_page=100\" }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9b83d959-9b99-4636-969b-ff36b92bdb81",
+      "name": "List Clip Runs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1760,
+        220
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "DftE6qE4wSGJCmSQ",
+          "name": "Bearer Auth account 3"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "84282198-0767-474b-881d-4994c7a7c7c5",
+      "name": "Find This Job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        220
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const cfg = $('Configure Job').first().json;\nconst runs = $input.first().json.workflow_runs || [];\nconst run = Array.isArray(runs) ? runs.find(r => r.display_title === cfg.run_label) : null;\nconst timedOut = Date.now() - cfg.started_at > 105 * 60 * 1000;\nconst failed = timedOut || (run?.status === 'completed' && run.conclusion !== 'success');\nconst ready = !failed && run?.status === 'completed' && run.conclusion === 'success';\nconst reason = timedOut ? 'GitHub rendering timed out after 105 minutes' :\n  (failed ? 'GitHub rendering failed: ' + (run?.html_url || 'Check GitHub Actions logs') : '');\nreturn [{json:{ready:!!ready, failed:!!failed, error:reason,\n  github_run_id:run?.id || null, github_run_url:run?.html_url || '',job_id:cfg.job_id}}];"
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "clip-ready-condition",
+              "leftValue": "={{ String($json.failed) }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1495d840-b6a0-41f0-b98d-49dab5334888",
+      "name": "GitHub Failed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2200,
+        220
+      ]
+    },
+    {
+      "id": "1e55ca7a-eddd-4e04-82d1-3aced4428a64",
+      "name": "Prepare GitHub Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        40
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const cfg = $('Configure Job').first().json;\nconst current = $input.first().json;\nreturn [{json:{row_number:cfg.row_number,job_id:cfg.job_id,error:String(current.error || 'GitHub rendering failed').slice(0,800)}}];"
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "clip-ready-condition",
+              "leftValue": "={{ String($json.ready) }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "714ced94-ffec-4953-9b70-2dd204705dc2",
+      "name": "Clips Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2420,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://api.github.com/repos/\" + $(\"Configure Job\").first().json.repo + \"/actions/runs/\" + $json.github_run_id + \"/artifacts?per_page=50\" }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0e196030-9166-4def-8cc8-4f2eb3f21862",
+      "name": "List Run Artifacts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2650,
+        320
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "DftE6qE4wSGJCmSQ",
+          "name": "Bearer Auth account 3"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('Configure Job').first().json;\nconst data = $input.first().json;\nconst name = 'clips-' + cfg.job_id;\nconst artifact = (data.artifacts || []).find(a => a.name === name && !a.expired);\nif (!artifact?.archive_download_url)\n  throw new Error('No clip artifact found for ' + name);\nreturn [{json:{archive_download_url:artifact.archive_download_url}}];"
+      },
+      "id": "741ff32c-715a-4b2f-aa01-0c4235b92656",
+      "name": "Find Clips ZIP",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        320
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.archive_download_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "7816f7f3-5071-49bb-be83-789e74af2821",
+      "name": "Download Clips ZIP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3100,
+        320
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "DftE6qE4wSGJCmSQ",
+          "name": "Bearer Auth account 3"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "outputPrefix": "extracted_"
+      },
+      "id": "261d1e39-3ec1-4763-966f-4f3986b066c7",
+      "name": "Unzip Clips",
+      "type": "n8n-nodes-base.compression",
+      "typeVersion": 1.1,
+      "position": [
+        3320,
+        320
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('Configure Job').first().json;\nconst output = [];\nconst items = $input.all();\nfor (const item of items) {\n  for (const [key, binary] of Object.entries(item.binary || {})) {\n    const filename = binary.fileName || '';\n    if (!/\\.mp4$/i.test(filename) && binary.mimeType !== 'video/mp4') continue;\n    const found = filename.match(/clip_(\\d+)\\.mp4$/i);\n    if (!found) throw new Error('Unknown MP4 filename: ' + filename);\n    const number = Number(found[1]);\n    const base = cfg.base_title.trim() || 'Best Moments';\n    const title = (base + ' | Part ' + number + ' #Shorts').slice(0, 99);\n    output.push({json:{clip_number:number, title,\n      description:'Highlight ' + number + ' from an authorized source. #Shorts #Highlights',\n      original_source:cfg.source_url, job_id:cfg.job_id},\n      binary:{data:binary}});\n  }\n}\noutput.sort((a,b) => a.json.clip_number-b.json.clip_number);\nif (!output.length) throw new Error('ZIP contains no MP4 clips.');\nreturn output;"
+      },
+      "id": "84da29f1-d488-4f21-b38d-20d0c60e3ad9",
+      "name": "Prepare MP4 Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3540,
+        320
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "title": "={{ $json.title }}",
+        "regionCode": "EG",
+        "categoryId": "24",
+        "options": {
+          "description": "={{ $json.description }}",
+          "privacyStatus": "public",
+          "tags": "Shorts,Highlights,Clips"
+        }
+      },
+      "id": "5f27453d-b022-4949-bdd1-69d5cb8c1940",
+      "name": "Upload Shorts to YouTube",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [
+        3770,
+        320
+      ],
+      "credentials": {
+        "youTubeOAuth2Api": {
+          "id": "1pwrEJLIkJE2vaFF",
+          "name": "YouTube account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const uploaded = $input.all();\nconst clips = $('Prepare MP4 Items').all();\nreturn uploaded.map((item, i) => {\n  const id = item.json.uploadId || item.json.id || item.json.videoId || item.json.data?.id;\n  if (!id || typeof id !== 'string')\n    throw new Error('YouTube did not confirm video ID for clip ' + (i + 1));\n  return {json:{clip_number:clips[i]?.json.clip_number ?? i + 1,\n    title:clips[i]?.json.title || 'Short',\n    url:'https://www.youtube.com/shorts/' + id,\n    uploadId:id}};\n});"
+      },
+      "id": "78ba091f-237e-453e-9d3a-5e5464343563",
+      "name": "YouTube Links",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3980,
+        320
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "80abcca4-0101-4ffc-b3a2-409439712915",
+      "name": "Summarize Shorts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4200,
+        320
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const cfg = $('Configure Job').first().json;\nconst items = $input.all();\nconst urls = items.map(item => item.json.url).filter(Boolean);\nif (!urls.length || urls.length !== items.length) throw new Error('YouTube did not confirm all uploaded Shorts');\nreturn [{json:{row_number:cfg.row_number, job_id:cfg.job_id, shorts_links:urls.join('\\n'),status:'done'}}];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "f91d1478-505e-440a-826a-ff41573ebd66",
+      "name": "Mark Done",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        4420,
+        320
+      ],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1HQsMb9d5wUvrMdRxphVN4ZTi9Vd9H5Hpx-FQL-Hlx_0",
+          "mode": "id",
+          "cachedResultName": "videos sheet",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HQsMb9d5wUvrMdRxphVN4ZTi9Vd9H5Hpx-FQL-Hlx_0/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Clipping Queue",
+          "mode": "name",
+          "cachedResultName": "Clipping Queue",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HQsMb9d5wUvrMdRxphVN4ZTi9Vd9H5Hpx-FQL-Hlx_0/edit#gid=862104301"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ Number($json.row_number) }}",
+            "status": "done",
+            "shorts_links": "={{ $json.shorts_links }}",
+            "error": "",
+            "updated_at": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "source_url",
+              "displayName": "source_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "clip_count",
+              "displayName": "clip_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "clip_seconds",
+              "displayName": "clip_seconds",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "language",
+              "displayName": "language",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "narration",
+              "displayName": "narration",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "job_id",
+              "displayName": "job_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "shorts_links",
+              "displayName": "shorts_links",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error",
+              "displayName": "error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "TVqY0YmVBrTTDJGm",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "a45f7798-592c-4ce1-84e1-505be5792b60",
+      "name": "Normalize Node Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        580
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const cfg = $('Configure Job').first().json;\nconst item = $input.first().json || {};\nconst err = item.error || item;\nconst message = typeof err === 'string' ? err : err.message || err.description || JSON.stringify(err);\nreturn [{json:{row_number:cfg.row_number,job_id:cfg.job_id,error:String(message || 'Node failed').slice(0,800)}}];"
+      }
+    },
+    {
+      "id": "13f8afce-26d6-4695-9443-78de76d8b4cf",
+      "name": "Mark Error",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        4420,
+        580
+      ],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1HQsMb9d5wUvrMdRxphVN4ZTi9Vd9H5Hpx-FQL-Hlx_0",
+          "mode": "id",
+          "cachedResultName": "videos sheet",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HQsMb9d5wUvrMdRxphVN4ZTi9Vd9H5Hpx-FQL-Hlx_0/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Clipping Queue",
+          "mode": "name",
+          "cachedResultName": "Clipping Queue",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HQsMb9d5wUvrMdRxphVN4ZTi9Vd9H5Hpx-FQL-Hlx_0/edit#gid=862104301"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ Number($json.row_number) }}",
+            "status": "error",
+            "error": "={{ $json.error }}",
+            "updated_at": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "source_url",
+              "displayName": "source_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "clip_count",
+              "displayName": "clip_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "clip_seconds",
+              "displayName": "clip_seconds",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "language",
+              "displayName": "language",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "narration",
+              "displayName": "narration",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "job_id",
+              "displayName": "job_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "shorts_links",
+              "displayName": "shorts_links",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error",
+              "displayName": "error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "TVqY0YmVBrTTDJGm",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Read Clipping Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Read Clipping Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Clipping Queue": {
+      "main": [
+        [
+          {
+            "node": "Pick Next Pending",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Next Pending": {
+      "main": [
+        [
+          {
+            "node": "Invalid Source URL?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Invalid Source URL?": {
+      "main": [
+        [
+          {
+            "node": "Mark Invalid Row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Processing": {
+      "main": [
+        [
+          {
+            "node": "Configure Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configure Job": {
+      "main": [
+        [
+          {
+            "node": "Dispatch GitHub Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch GitHub Job": {
+      "main": [
+        [
+          {
+            "node": "Wait for GitHub",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Node Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for GitHub": {
+      "main": [
+        [
+          {
+            "node": "List Clip Runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Clip Runs": {
+      "main": [
+        [
+          {
+            "node": "Find This Job",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Node Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find This Job": {
+      "main": [
+        [
+          {
+            "node": "GitHub Failed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GitHub Failed?": {
+      "main": [
+        [
+          {
+            "node": "Prepare GitHub Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Clips Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare GitHub Error": {
+      "main": [
+        [
+          {
+            "node": "Mark Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clips Ready?": {
+      "main": [
+        [
+          {
+            "node": "List Run Artifacts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait for GitHub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Run Artifacts": {
+      "main": [
+        [
+          {
+            "node": "Find Clips ZIP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Node Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Clips ZIP": {
+      "main": [
+        [
+          {
+            "node": "Download Clips ZIP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Node Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Clips ZIP": {
+      "main": [
+        [
+          {
+            "node": "Unzip Clips",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Node Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unzip Clips": {
+      "main": [
+        [
+          {
+            "node": "Prepare MP4 Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Node Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare MP4 Items": {
+      "main": [
+        [
+          {
+            "node": "Upload Shorts to YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Node Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Shorts to YouTube": {
+      "main": [
+        [
+          {
+            "node": "YouTube Links",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Node Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube Links": {
+      "main": [
+        [
+          {
+            "node": "Summarize Shorts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Node Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize Shorts": {
+      "main": [
+        [
+          {
+            "node": "Mark Done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Node Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Node Error": {
+      "main": [
+        [
+          {
+            "node": "Mark Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "pinData": {},
+  "tags": [],
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

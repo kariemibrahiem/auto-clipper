@@ -5,6 +5,7 @@ Requires no application API keys. Clip selection uses speech, not computer visio
 
 import argparse
 import asyncio
+import ipaddress
 import json
 import os
 import re
@@ -14,11 +15,15 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parent
 WORK = ROOT / "work"
 OUT = ROOT / "outputs"
 WIDTH, HEIGHT, FPS = 720, 1280, 30
+MAX_SOURCE_BYTES = 1_500_000_000
+MAX_SOURCE_SECONDS = 3 * 60 * 60
+DEFAULT_ANALYSIS_SECONDS = 30 * 60
 
 
 def cmd(*args):
@@ -41,29 +46,101 @@ def has_audio(path):
     return any(s.get("codec_type") == "audio" for s in media_info(path)["streams"])
 
 
-def download_video(url):
+def validate_media_url(url):
     parsed = urlsplit(url)
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
         raise ValueError("Source video must be a public HTTPS URL")
-    if parsed.hostname.lower() in ("localhost", "127.0.0.1", "::1"):
+    host = parsed.hostname.lower()
+    if host in ("localhost", "::1") or host.endswith((".local", ".internal")):
         raise ValueError("Local URLs are not allowed")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        if not address.is_global:
+            raise ValueError("Only public media hosts are allowed")
+    return host
+
+
+def download_direct_video(url):
+    target = WORK / "source.mp4"
+    req = Request(url, headers={"User-Agent": "AutoClipper/2.0", "Accept": "video/*,*/*"})
+    try:
+        with urlopen(req, timeout=90) as response:
+            validate_media_url(response.geturl())
+            content_type = response.headers.get_content_type().lower()
+            if not (content_type.startswith("video/") or content_type in
+                    {"application/octet-stream", "binary/octet-stream"}):
+                raise ValueError(f"Media URL returned {content_type}, not a video file. "
+                                 "Use a direct downloadable MP4 link, not a web page.")
+            with target.open("wb") as dest:
+                total = 0
+                while block := response.read(1024 * 1024):
+                    total += len(block)
+                    if total > MAX_SOURCE_BYTES:
+                        raise ValueError("Source exceeds 1.5 GB; provide a shorter or compressed MP4")
+                    dest.write(block)
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+    if target.stat().st_size < 1000:
+        raise ValueError("Downloaded media file is empty")
+    return target
+
+
+def download_video(url, prefer_direct=False):
+    host = validate_media_url(url)
+    # Direct public media files are fetched without involving YouTube extraction.
+    if prefer_direct or not (host == "youtu.be" or
+                            host.endswith((".youtube.com", ".youtube-nocookie.com")) or
+                            host == "youtube.com"):
+        if prefer_direct or urlsplit(url).path.lower().endswith(
+                (".mp4", ".mov", ".mkv", ".webm", ".m4v")):
+            return download_direct_video(url)
     import yt_dlp
 
     opts = {"outtmpl": str(WORK / "source.%(ext)s"), "noplaylist": True,
             "format": "bv*[height<=720]+ba/b[height<=720]/best",
             "merge_output_format": "mp4", "quiet": True, "socket_timeout": 45,
-            "retries": 3, "fragment_retries": 3, "max_filesize": 700_000_000,
+            "retries": 3, "fragment_retries": 3, "max_filesize": MAX_SOURCE_BYTES,
             "js_runtimes": {"node": {}}, "remote_components": {"ejs:github"}}
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.download([url])
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([url])
+    except yt_dlp.utils.DownloadError as exc:
+        if "Sign in to confirm" in str(exc) or "not a bot" in str(exc):
+            raise RuntimeError("YouTube blocked this GitHub runner (bot verification). "
+                               "Add an authorized HTTPS direct MP4 URL in the "
+                               "Google Sheet media_url column, or use MP4 as source_url. "
+                               "Changing JavaScript runtime alone cannot fix this.") from exc
+        raise
     files = [f for f in WORK.glob("source.*")
              if f.suffix.lower() in (".mp4", ".webm", ".mkv", ".mov", ".m4v")]
     if not files:
         raise RuntimeError("Unable to download source. Try a direct MP4 URL.")
     result = max(files, key=lambda f: f.stat().st_size)
-    if result.stat().st_size > 700_000_000:
-        raise ValueError("Source exceeds 700 MB")
+    if result.stat().st_size > MAX_SOURCE_BYTES:
+        raise ValueError("Source exceeds 1.5 GB")
     return result
+
+
+def prepare_analysis_video(source, start_seconds, analysis_seconds):
+    total = duration(source)
+    if total < 5 or total > MAX_SOURCE_SECONDS:
+        raise ValueError("Video duration must be from 5 seconds to 3 hours")
+    if start_seconds >= total - 5:
+        raise ValueError("start_seconds is after the end of the video")
+    available = total - start_seconds
+    if start_seconds == 0 and available <= analysis_seconds:
+        return source, 0.0
+    segment = WORK / "analysis.mp4"
+    # Copy an MP4 window before speech analysis, so long videos do not exhaust
+    # the 105-minute GitHub Actions job limit. No re-encoding is required here.
+    cmd("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", start_seconds,
+        "-i", source, "-t", min(analysis_seconds, available), "-map", "0:v:0",
+        "-map", "0:a?", "-c", "copy", "-avoid_negative_ts", "make_zero", segment)
+    return segment, start_seconds
 
 
 @dataclass(frozen=True)
@@ -185,10 +262,10 @@ def overlay_narrator(visual, narrator, final, length):
         "-b:a", "128k", "-movflags", "+faststart", final)
 
 
-def render(source, opts):
+def render(source, opts, source_offset=0.0):
     length = duration(source)
-    if length < 5 or length > 45 * 60:
-        raise ValueError("Video duration must be from 5 seconds to 45 minutes")
+    if length < 5 or length > MAX_SOURCE_SECONDS:
+        raise ValueError("Video duration must be from 5 seconds to 3 hours")
     if not any(s.get("codec_type") == "video" for s in media_info(source)["streams"]):
         raise ValueError("Source has no video track")
     lines, detected = [], "en"
@@ -200,6 +277,7 @@ def render(source, opts):
     language = opts.language if opts.language != "auto" else ("ar" if detected == "ar" else "en")
     spans = choose_windows(length, lines, opts.clip_count, opts.clip_seconds)
     manifest = {"job_id": opts.job_id, "language": language,
+                "source_offset_seconds": source_offset,
                 "selection": "spoken highlights" if lines else "spaced fallback", "clips": []}
     for i, (start, seconds) in enumerate(spans, 1):
         print(f"Clip {i}/{len(spans)}: {start}s to {start + seconds:.2f}s", flush=True)
@@ -214,7 +292,8 @@ def render(source, opts):
             raise RuntimeError("Rendered dimensions are not 720x1280")
         if abs(float(info["format"]["duration"]) - seconds) > 1.5:
             raise RuntimeError("Unexpected rendered MP4 duration")
-        manifest["clips"].append({"number": i, "start": start, "duration": seconds,
+        manifest["clips"].append({"number": i, "start": round(start + source_offset, 2),
+                                  "duration": seconds,
                                   "file": final.name, "voice_added": bool(voice), "hook": hook})
     (OUT / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2),
                                         encoding="utf-8")
@@ -232,6 +311,8 @@ def main():
         language=os.getenv("LANGUAGE", "auto").lower().strip(),
         narration=os.getenv("NARRATION", "on").lower().strip() == "on",
         job_id=os.getenv("JOB_ID", "manual"), skip_transcription=args.skip_transcription,
+        start_seconds=float(os.getenv("START_SECONDS", "0")),
+        analysis_seconds=float(os.getenv("ANALYSIS_SECONDS", str(DEFAULT_ANALYSIS_SECONDS))),
     )
     if not 1 <= config.clip_count <= 5 or not 15 <= config.clip_seconds <= 55:
         raise ValueError("Valid settings: 1–5 clips, each 15–55 seconds")
@@ -239,12 +320,20 @@ def main():
         raise ValueError("LANGUAGE must be auto, ar or en")
     if not re.fullmatch(r"[a-zA-Z0-9_-]{1,60}", config.job_id):
         raise ValueError("Invalid job ID")
+    if not (0 <= config.start_seconds < MAX_SOURCE_SECONDS):
+        raise ValueError("START_SECONDS must be between 0 and 10800")
+    if not (60 <= config.analysis_seconds <= 45 * 60):
+        raise ValueError("ANALYSIS_SECONDS must be between 60 and 2700")
     WORK.mkdir(exist_ok=True)
     OUT.mkdir(exist_ok=True)
-    video = args.local_video if args.local_video else download_video(os.getenv("SOURCE_URL", ""))
+    video = args.local_video if args.local_video else download_video(
+        os.getenv("SOURCE_URL", ""),
+        prefer_direct=os.getenv("SOURCE_IS_DIRECT", "false").lower() == "true")
     if not video.is_file():
         raise FileNotFoundError(video)
-    render(video, config)
+    prepared, offset = prepare_analysis_video(video, config.start_seconds,
+                                              config.analysis_seconds)
+    render(prepared, config, source_offset=offset)
 
 
 if __name__ == "__main__":

@@ -2,11 +2,31 @@
 
 مستقل تمامًا عن مشروع ميلا. مفيش أي GitHub tokens أو API keys محفوظة هنا.
 
+## تحديث حل مشكلة YouTube bot verification (نوفمبر 2026)
+
+**الحل المستقر:** استخدم رابط فيديو MP4 مباشر قابل للتحميل من مصدر تملك حقوق استخدامه.
+Google Sheets يتعامل مع عمود `source_url` كما هو. تستطيع وضع رابط MP4 مباشر بدل رابط مشاهدة YouTube.
+لو عايز تحتفظ برابط YouTube في `source_url`، أضف عمودًا اختياريًا جديدًا اسمه بالضبط
+`media_url` وضع فيه رابط تحميل MP4 مباشر مرخص لنفس المحتوى.
+
+- سيتم رفض رابط مشاهدة YouTube الذي لا يملك `media_url` **قبل** تشغيل GitHub، برسالة واضحة في `error`؛ لأن GitHub Actions حُظر سابقًا برسالة `Sign in to confirm you're not a bot`.
+- لو صف سابق حالته `error`، غيّرها إلى `pending` فقط بعد تغيير رابط الفيديو إلى مصدر قابل للتحميل.
+- يدعم محرك GitHub فيديو حتى 3 ساعات وحجم 1.5GB؛ لكن يحلل افتراضيًا **أول 30 دقيقة فقط** حتى لا يستنفد مهلة GitHub.
+- لمراجعة جزء آخر من الفيديو الطويل: عمودان اختياريان في Sheet هما `start_seconds` (مثل `3000`) و`analysis_seconds` (من 60 إلى 2700، الافتراضي 1800). المقطع الناتج سيكون من نافذة التحليل المحددة.
+- الاختيار آلي حسب الكلام في الصوت وليس ضمانًا لاكتشاف **أطرف** لقطة بصريًا.
+- `narration=off` يترك صوت المصدر بدون تعليق آلي.
+
+**استيراد n8n:** استخدم `Auto_Clipper_Google_Sheets_MP4_FIXED.json`، وأبقِ بيانات حسابات Google Sheets/GitHub/YouTube الخاصة بك في Credentials كما هي. الإصدار المحدث يضيف حقول GitHub `source_is_direct`, `start_seconds`, `analysis_seconds` تلقائيًا.
+
+**Content Rewards:** يُمكن نسخ روابط Shorts الناتجة من عمود `shorts_links` للتقديم في حملة مسموح لها بالمصدر والمنصة. تقديم المحتوى للحملة والموافقة على مكافآته يخضعان لشروط Content Rewards؛ هذا المشروع لا يوصل بالحساب أو يقدّم طلبات للموقع آليًا.
+
+**تحذير حقوقي:** لقطات من فيديوهات الآخرين بدون إضافات أصلية كبيرة قد تكون غير مؤهلة لتحقيق الدخل على YouTube حتى إذا لم تُقدَّم مطالبة حقوق نشر.
+
 ## قبل أول تشغيل (مرة واحدة فقط)
 
-1. اعمل GitHub repository جديد باسم **`auto-clipper`** في الحساب **`kariemibrahiem`**، وخلي الفرع الأساسي `main`.
-2. ارفع **محتويات هذا الفولدر** (مش ملف ZIP نفسه) على جذر الـrepository. لازم الملف `.github/workflows/clipper.yml` يكون موجود.
-3. من n8n، اختار **Import from File** وافتح `n8n/Auto_Clipping_YouTube_n8n.json`.
+1. استخدم GitHub repository الموجود باسم **`kariemibrahiem/auto-clipper`** والفرع `main`.
+2. فكّ ZIP وارفع **محتويات الفولدر** إلى جذر الـrepository، مع تحديث `clipper.py` و`.github/workflows/clipper.yml` تحديدًا. **رفع ZIP نفسه إلى GitHub لن يثبّت الأكواد**.
+3. من n8n، اختار **Import from File** وافتح `n8n/Auto_Clipper_Google_Sheets_MP4_FIXED.json`، أو النسخة المستقلة المرفقة بنفس الاسم.
 4. أنشئ Credential جديدة في n8n من نوع **HTTP Bearer Auth**، وحط فيها GitHub Fine-grained Personal Access Token. نطاقه repository `auto-clipper` فقط، والصلاحية **Actions: Read and write**. لا تضع التوكن داخل Code node أو URL أو GitHub files.
 5. افتح الأربع نودز دول، واختار **نفس الـCredential** اللي عملتها:
    - `Dispatch GitHub Job`
@@ -17,11 +37,11 @@
 
 ## كل مرة عندك فيديو
 
-1. افتح `Configure Job` في n8n.
-2. غيّر `SOURCE_VIDEO_URL` للينك HTTPS بتاع الفيديو اللي عندك حق تستخدمه.
-3. اختياري: غيّر `VIDEO_TITLE`, `CLIP_COUNT`, `CLIP_SECONDS`, `LANGUAGE`.
-4. اضغط **Execute Workflow**. استنى GitHub يخلص، وn8n هيرفع كل MP4 ليوتيوب **Public** مباشرة.
-5. النود الأخيرة `YouTube Links` هترجع روابط الشورتس.
+1. افتح `videos sheet` ثم تبويب **`Clipping Queue`**.
+2. في `source_url` ضع رابط **MP4 مباشر مرخص**، أو احتفظ برابط YouTube الأصلي وأضف عمود `media_url` برابط MP4 مباشر.
+3. اختياريًا غيّر `title`, `clip_count`, `clip_seconds`, `language`, `narration`، و`start_seconds` لو الفيديو طويل.
+4. حط `pending` في `status` (خصوصًا لو الصف القديم `error`) ثم شغّل n8n **Execute Workflow**.
+5. النود `Mark Done` هتحدّث `shorts_links`، أو `Mark Error` هتكتب سبب الفشل في `error`.
 
 ## الإعدادات الافتراضية
 

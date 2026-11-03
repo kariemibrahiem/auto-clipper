@@ -9,8 +9,23 @@ on:
         required: true
         type: string
       source_url:
-        description: HTTPS video URL you own or have rights to reuse
+        description: Public downloadable HTTPS MP4 (or supported platform URL) with reuse rights
         required: true
+        type: string
+      source_is_direct:
+        description: Treat source_url as a directly downloadable media file
+        required: false
+        default: 'false'
+        type: string
+      start_seconds:
+        description: Optional offset in the long source video (0 by default)
+        required: false
+        default: '0'
+        type: string
+      analysis_seconds:
+        description: Window to analyze (60 to 2700 seconds; 1800 by default)
+        required: false
+        default: '1800'
         type: string
       clip_count:
         description: Number of vertical clips (1 to 5)
@@ -43,6 +58,9 @@ jobs:
     env:
       JOB_ID: ${{ inputs.job_id }}
       SOURCE_URL: ${{ inputs.source_url }}
+      SOURCE_IS_DIRECT: ${{ inputs.source_is_direct }}
+      START_SECONDS: ${{ inputs.start_seconds }}
+      ANALYSIS_SECONDS: ${{ inputs.analysis_seconds }}
       CLIP_COUNT: ${{ inputs.clip_count }}
       CLIP_SECONDS: ${{ inputs.clip_seconds }}
       LANGUAGE: ${{ inputs.language }}
